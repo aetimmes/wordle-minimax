@@ -81,7 +81,12 @@ def main() -> None:
             )
             for guess, candidates in guess_candidates.items()
         ]
-        gc_cardinalities.sort(key=lambda t: (t[1][0][1], t[1][0][0].count('g'),))
+        gc_cardinalities.sort(
+            key=lambda t: (
+                t[1][0][1],
+                t[1][0][0].count("g"),
+            )
+        )
 
         best_word = gc_cardinalities[0][0]
         if args.clues:
