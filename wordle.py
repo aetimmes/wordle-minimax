@@ -8,7 +8,6 @@ Written by Andrew Timmes (andrew.timmes@gmail.com).
 import argparse
 import asyncio
 import functools
-import logging
 import multiprocessing
 from collections import defaultdict
 from multiprocessing.pool import ApplyResult
@@ -16,15 +15,13 @@ from typing import Any, Dict, List, Tuple
 
 ANSWERS_FILENAME = "answers.txt"
 GUESSES_FILENAME = "guesses.txt"
-LOGFILE = "output.log"
-logging.basicConfig(filename=LOGFILE)
 
 
 def main() -> None:
     """
     Compute best guesses.
 
-    Parse arguments, reads in legal guesses/answers, and then computes the best guesses
+    Parse arguments, read in legal guesses/answers, and then compute the best guesses
     to use given the list of legal guesses and pre-ordained guesses.
     """
     argparser = argparse.ArgumentParser(description="Minimax solver for Wordle")
@@ -32,22 +29,33 @@ def main() -> None:
         "guesses",
         nargs="*",
         default=[],
-        help="List of guesses to force solver to use before reverting to minimax, in \
-            order",
+        help="List of guesses to force solver to use before resorting to minimax, in \
+            order. Example: `wordle.py ratio lunes`",
     )
     argparser.add_argument(
-        "-a",
+        "-A",
         "--answers-file",
         action="store",
         default=ANSWERS_FILENAME,
-        help="File containing legal answers",
+        help="File containing newline-separated list of legal answers",
     )
     argparser.add_argument(
-        "-g",
+        "-G",
         "--guesses-file",
         action="store",
         default=GUESSES_FILENAME,
-        help="File containing legal guesses",
+        help="File containing newline-separated list of legal guesses",
+    )
+    argparser.add_argument(
+        "-c",
+        "--clues",
+        nargs="*",
+        help="""
+        List of guess responses in order, separated by spaces: 'g' for right
+        letter/location, 'y' for right letter/wrong location, 'r' for wrong letter.
+        Length must be <= length of list of guesses provided. Example: `wordle.py ratio
+        lunes -c ygrry`
+        """,
     )
     args = argparser.parse_args()
     with open(args.answers_file, mode="r", encoding="utf-8") as answer_file:
@@ -55,9 +63,14 @@ def main() -> None:
     with open(args.guesses_file, mode="r", encoding="utf-8") as guess_file:
         legal_guesses = [x.strip() for x in guess_file.readlines()] + legal_answers
 
-    while len(legal_answers) > 1:
+    validate_args(args)
+
+    response = "rrrrr"
+    while response != "ggggg":
         if args.guesses:
             guesses = [args.guesses.pop(0)]
+        elif len(legal_answers) == 1:
+            guesses = legal_answers
         else:
             guesses = legal_guesses
         guess_candidates = get_candidates(guesses, legal_answers)
@@ -68,13 +81,17 @@ def main() -> None:
             )
             for guess, candidates in guess_candidates.items()
         ]
-        gc_cardinalities.sort(key=lambda t: t[1])
+        gc_cardinalities.sort(key=lambda t: (t[1][0][1], t[1][0][0].count('g'),))
 
         best_word = gc_cardinalities[0][0]
-        hardest_response = gc_cardinalities[0][1][0][0]
-        legal_answers = guess_candidates[best_word][hardest_response]
-
-        print(best_word, hardest_response, len(legal_answers))
+        if args.clues:
+            response = args.clues.pop(0)
+        else:
+            response = gc_cardinalities[0][1][0][0]
+        legal_answers = guess_candidates[best_word][response]
+        print(best_word, response, len(legal_answers))
+        if len(legal_answers) < 1:
+            raise Exception("Unexpected failure: no legal answers remaining")
 
 
 def get_candidates(
@@ -264,6 +281,11 @@ def is_legal_guess(word: str, guess: str, response: str) -> bool:
             case "y":
                 if word[i] == c or seen[c] == count[guess[i]]:
                     return False
+            case _:
+                raise Exception(
+                    f"Invalid character found in guess response: {response}"
+                )
+
     return True
 
 
@@ -283,6 +305,45 @@ def enumerate_responses(n: int = 5) -> List[str]:
     for _ in range(n):
         results = [r + c for r in results for c in possibilities]
     return results
+
+
+def validate_args(args: argparse.Namespace) -> None:
+    """
+    Validate arguments for sanity.
+
+    Args:
+        args (argparse.Namespace): CLI arguments
+
+    Raises:
+        Exception: guess lengths don't match
+        Exception: more clues specified than guesses
+        Exception: clue length doesn't match guess length
+        Exception: invalid character found in clue
+    """
+    guess_length = 0
+    if args.guesses:
+        guess_length = len(args.guesses[0])
+        for guess in args.guesses:
+            if len(guess) != guess_length:
+                raise Exception(
+                    f'Invalid guess options: "{guess}" length does not match \
+                    "{args.guesses[0]}"'
+                )
+    if args.clues:
+        valid_chars = set(["r", "y", "g"])
+        if len(args.clues) > len(args.guesses):
+            raise Exception(
+                f"{len(args.clues)} clues given, but only {len(args.guesses)} guesses \
+                provided"
+            )
+        for clue in args.clues:
+            if len(clue) != guess_length:
+                raise Exception(
+                    f'Invalid clue: "{clue}" length does not match "{args.guesses[0]}"'
+                )
+            for c in clue:
+                if c not in valid_chars:
+                    raise Exception("Invalid character found in clue {clue}")
 
 
 if __name__ == "__main__":
